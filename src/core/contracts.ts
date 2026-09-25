@@ -8,6 +8,7 @@
  */
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type * as THREE from 'three';
+import type { StatusEffect, StatusEffects } from './status';
 
 // ---------------------------------------------------------------------------
 // Anatomy
@@ -103,6 +104,54 @@ export interface WeaponDef {
   centerOfMass: number;
   /** metres from the pommel end — where the lead hand grips. */
   gripPoint: number;
+  /** Phase 3: one- or two-handed (default 2 for longsword/poleaxe, 1 otherwise). */
+  hands?: 1 | 2;
+  /** Phase 3: shield carried on the off hand, if any. */
+  shield?: ShieldId | null;
+  /** Phase 3: effective reach from the lead hand to the striking surface, metres. */
+  reach?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Shields (Phase 3)
+// ---------------------------------------------------------------------------
+
+export type ShieldId = 'heater' | 'buckler' | 'round';
+
+/** Which part of a shield took the impact. */
+export type ShieldZone = 'face' | 'rim' | 'boss';
+
+export interface ShieldDef {
+  id: ShieldId;
+  displayName: string;
+  /** kg — a heater shield is ~3–4.5 kg. */
+  mass: number;
+  /** Outer dimensions, metres. */
+  width: number;
+  height: number;
+  thickness: number;
+  /** Fraction of an impact's energy the structure soaks up (wood + leather + linen facing). */
+  absorb: number;
+  /** Fraction of the non-absorbed energy passed into the bearer's arm as a shove (rest is deflected). */
+  transmit: number;
+  /** Energy budget (J) before it splits / breaks. */
+  durabilityJ: number;
+}
+
+/**
+ * A physical shield: its own rigid body, attached to the bearer's off hand /
+ * forearm by a compliant joint so blows actually push it back.
+ */
+export interface IShield {
+  readonly def: ShieldDef;
+  readonly body: RAPIER.RigidBody;
+  readonly object: THREE.Object3D;
+  /** Who carries it. */
+  readonly owner: IRagdollTarget | 'player';
+  /** Remaining structural integrity 0..1 (0 = broken). */
+  readonly integrity: number;
+  /** Record a blow the shield stopped (reduces integrity, may break it). Returns true if it broke. */
+  absorbImpact(energyJ: number, point: THREE.Vector3, normal: THREE.Vector3): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +161,7 @@ export interface WeaponDef {
 export type ColliderTag =
   | { kind: 'bodyPart'; target: IRagdollTarget; part: BodyPartId }
   | { kind: 'weapon'; weapon: IWeapon; zone: WeaponZone }
+  | { kind: 'shield'; shield: IShield; zone: ShieldZone }
   | { kind: 'static'; surface: 'stone' | 'wood' | 'dirt' | 'metal' }
   | { kind: 'prop'; surface: 'stone' | 'wood' | 'dirt' | 'metal'; object?: THREE.Object3D };
 
@@ -174,6 +224,8 @@ export interface IRagdollTarget {
   applyHitReaction(part: BodyPartId, impulse: THREE.Vector3, point: THREE.Vector3): void;
   /** Restore to a fresh standing state (used by the R key and the test harness). */
   reset(): void;
+  /** Phase 3: active status effects (limping, concussed, ...). Movement code reads it. */
+  readonly status?: StatusEffects;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +265,14 @@ export interface IPlayerController {
   scriptedStrike(target: THREE.Vector3, style: StrikeStyle, duration?: number): void;
   /** Return weapon and player to the guard stance at spawn. */
   reset(): void;
+  /** Phase 3: currently equipped loadout. */
+  readonly loadout?: WeaponLoadoutId;
+  /** Phase 3: swap weapons at runtime (rebuilds the weapon + shield bodies in the hands). */
+  setLoadout?(id: WeaponLoadoutId): void;
+  /** Phase 3: the off-hand shield, if the loadout has one. */
+  readonly shield?: IShield | null;
+  /** Phase 3: the player's own status effects (a limping player moves 60 % slower). */
+  readonly status?: StatusEffects;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,4 +327,23 @@ export interface GameEvents {
   reset: { target: IRagdollTarget };
   /** Camera shake / hit-stop request from gameplay code. */
   impactFeedback: { strength: number; hitStop: number };
+  /** Phase 3: a weapon struck a shield, which absorbed/deflected the blow. */
+  block: {
+    shield: IShield;
+    weapon: IWeapon | null;
+    zone: ShieldZone;
+    point: THREE.Vector3;
+    normal: THREE.Vector3;
+    /** Incoming kinetic energy, J. */
+    energy: number;
+    /** Energy soaked up by the shield structure, J. */
+    absorbed: number;
+    /** Energy passed into the bearer's arm as a shove, J. */
+    transmitted: number;
+    broke: boolean;
+  };
+  /** Phase 3: a status effect started (active=true) or ended. */
+  status: { target: IRagdollTarget | 'player'; effect: StatusEffect; active: boolean };
+  /** Phase 3: someone switched weapon loadout. */
+  loadout: { owner: IRagdollTarget | 'player'; id: WeaponLoadoutId };
 }

@@ -101,8 +101,10 @@ export const ARMOR_MATERIALS: Readonly<Record<ArmorType, ArmorMaterial>> = {
       // defeats it, and only a small fraction arrives as concussion.
       cut: { absorb: 0.95, penetrationJ: 450, transmit: 0.08 },
       thrust: { absorb: 0.8, penetrationJ: 220, transmit: 0.15 },
-      // Percussion is plate's weakness: most of a hammer blow still arrives.
-      blunt: { absorb: 0.4, penetrationJ: Infinity, transmit: 0.6 },
+      // Percussion is plate's weakness: the shell spreads the blow but does not
+      // stop it — ~70 % of a warhammer's energy still arrives as internal
+      // trauma / concussion behind an intact plate.
+      blunt: { absorb: 0.3, penetrationJ: Infinity, transmit: 0.7 },
     },
     blockedEffect: 'sparks',
     blockedSound: 'plate',
@@ -264,6 +266,12 @@ export interface MitigationResult {
   penetrated: boolean;
   /** The layer that stopped the strike, or null if it went through / there was none. */
   stoppedBy: ArmorPieceDef | null;
+  /**
+   * True when armour held but energy still got through as closed trauma
+   * (concussion under a helm, broken ribs under a breastplate). The damage
+   * system applies this as internal damage rather than an open wound.
+   */
+  internal: boolean;
   /** What the impact should look/sound like. */
   effect: ImpactEffect;
   sound: ImpactSound;
@@ -281,15 +289,17 @@ export function mitigate(layers: readonly ArmorPieceDef[], type: DamageType, ene
     const mat = ARMOR_MATERIALS[layer.type];
     const r = mat.resist[type];
     if (e < r.penetrationJ) {
+      const transmittedJ = e * r.transmit;
       return {
-        transmittedJ: e * r.transmit,
+        transmittedJ,
         penetrated: false,
         stoppedBy: layer,
+        internal: transmittedJ > 0,
         effect: mat.blockedEffect,
         sound: mat.blockedSound,
       };
     }
     e *= 1 - r.absorb;
   }
-  return { transmittedJ: e, penetrated: true, stoppedBy: null, effect: 'blood', sound: 'flesh' };
+  return { transmittedJ: e, penetrated: true, stoppedBy: null, internal: false, effect: 'blood', sound: 'flesh' };
 }
